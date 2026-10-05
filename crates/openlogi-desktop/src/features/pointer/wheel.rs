@@ -4,24 +4,31 @@
 //! without their own follow the app-wide setting in Settings → General while
 //! it is turned on. Applying it needs the mouse's main wheel captured over
 //! HID++, so it is offered only on mice that expose a high-resolution wheel.
+//!
+//! The ratchet debounce drops the one tick in the wrong direction a MagSpeed
+//! wheel can send as its ratchet catches it. It also runs on the captured
+//! wheel, and is off until turned on for a mouse.
 
 use gpui::{
     App, Context, Div, IntoElement, ParentElement, Render, SharedString, Styled, Subscription,
     Window, div, rgb,
 };
 use gpui_component::{h_flex, slider::Slider, v_flex};
-use openlogi_core::config::VerticalScrollSensitivity;
+use openlogi_core::config::{VerticalScrollSensitivity, WheelDebounce, WheelDebounceStrength};
 
 use super::smartshift::disabled_track;
 use crate::state::{AppState, DeviceRecord, StateEvent, StateEvents};
 use crate::ui::commit_slider::{CommitSlider, SliderRange};
 use crate::ui::section::section_label;
 use crate::ui::theme::{self, ACCENT_BLUE, Palette, Typography as _};
+use crate::ui::toggle_row::{ToggleRow, ToggleState};
 
 pub struct MainWheelPanel {
     /// The per-device vertical sensitivity slider (device override; devices
     /// without one follow the app-wide default from Settings → General).
     vertical_sensitivity: CommitSlider<VerticalScrollSensitivity>,
+    /// The per-device ratchet debounce strength slider.
+    wheel_debounce_strength: CommitSlider<WheelDebounceStrength>,
     _state_obs: Subscription,
 }
 
@@ -45,6 +52,14 @@ impl MainWheelPanel {
                 });
             },
         );
+        let wheel_debounce_strength = CommitSlider::new(
+            SliderRange::new(WheelDebounceStrength::MIN, WheelDebounceStrength::MAX),
+            WheelDebounceStrength::DEFAULT,
+            cx,
+            |_, strength, cx| {
+                AppState::apply(cx, |state| state.commit_wheel_debounce_strength(strength));
+            },
+        );
         let state_obs = AppState::repaint_on(cx, |event| {
             matches!(
                 event,
@@ -53,6 +68,7 @@ impl MainWheelPanel {
         });
         Self {
             vertical_sensitivity,
+            wheel_debounce_strength,
             _state_obs: state_obs,
         }
     }
@@ -85,6 +101,46 @@ impl MainWheelPanel {
         };
         row.render(theme::palette(cx))
     }
+
+    /// The ratchet debounce strength row, greyed out while the filter is off.
+    fn wheel_debounce_strength_row(
+        &mut self,
+        facts: &MainWheelFacts,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let committed = facts.wheel_debounce.strength;
+        self.wheel_debounce_strength.sync(committed, window, cx);
+        let shown = self.wheel_debounce_strength.shown(committed);
+
+        let adjustable = facts.supported && facts.wheel_debounce.enabled;
+        let slider =
+            adjustable.then(|| Slider::new(self.wheel_debounce_strength.slider()).horizontal());
+        let row = SliderRow {
+            label: tr!("pointer.wheel_debounce_strength"),
+            value: shown.to_string().into(),
+            slider,
+            caption: tr!("pointer.wheel_debounce_strength_description"),
+        };
+        row.render(theme::palette(cx))
+    }
+}
+
+/// The ratchet debounce switch.
+fn wheel_debounce_toggle_row(facts: &MainWheelFacts, pal: Palette) -> Div {
+    let row = ToggleRow {
+        id: "wheel-debounce-toggle",
+        title: tr!("pointer.wheel_debounce_enabled"),
+        description: tr!("pointer.wheel_debounce_enabled_description"),
+        unsupported: tr!("pointer.wheel_debounce_unsupported"),
+        state: ToggleState {
+            on: facts.wheel_debounce.enabled,
+            supported: facts.supported,
+        },
+    };
+    row.render(pal, |enabled, cx| {
+        AppState::apply(cx, |state| state.commit_wheel_debounce_enabled(enabled));
+    })
 }
 
 /// What the panel shows for the selected mouse.
@@ -92,6 +148,8 @@ impl MainWheelPanel {
 struct MainWheelFacts {
     /// Its effective vertical sensitivity: its own value, or the app-wide one.
     vertical_sensitivity: VerticalScrollSensitivity,
+    /// Its ratchet debounce; the strength is kept while the filter is off.
+    wheel_debounce: WheelDebounce,
     /// Whether it has a wheel OpenLogi can capture to apply its own settings.
     supported: bool,
 }
@@ -107,6 +165,7 @@ impl MainWheelFacts {
         };
         Self {
             vertical_sensitivity,
+            wheel_debounce: state.current_wheel_debounce(),
             supported: state.current_hires_wheel_supported(),
         }
     }
@@ -151,7 +210,15 @@ impl SliderRow {
 impl Render for MainWheelPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let facts = MainWheelFacts::read(cx);
+        let pal = theme::palette(cx);
         let vertical_sensitivity = self.vertical_sensitivity_row(&facts, window, cx);
-        v_flex().gap_4().w_full().child(vertical_sensitivity)
+        let debounce_switch = wheel_debounce_toggle_row(&facts, pal);
+        let debounce_strength = self.wheel_debounce_strength_row(&facts, window, cx);
+        v_flex()
+            .gap_4()
+            .w_full()
+            .child(vertical_sensitivity)
+            .child(debounce_switch)
+            .child(debounce_strength)
     }
 }

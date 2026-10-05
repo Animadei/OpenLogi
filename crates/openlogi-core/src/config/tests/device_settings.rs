@@ -76,6 +76,38 @@ fn test_vertical_scroll_sensitivity() {
     );
 }
 
+/// The ratchet debounce is off until turned on, and keeps its strength while
+/// off.
+#[test]
+fn test_wheel_debounce() {
+    let mut cfg = Config::default();
+    assert_eq!(cfg.wheel_debounce("2b042"), WheelDebounce::default());
+
+    cfg.set_wheel_debounce_strength("2b042", WheelDebounceStrength::MAX);
+    assert_eq!(
+        cfg.wheel_debounce("2b042").active_strength(),
+        None,
+        "a strength alone does not turn the filter on"
+    );
+
+    cfg.set_wheel_debounce_enabled("2b042", true);
+    let restored = write_and_read(&cfg);
+    let expected = WheelDebounce {
+        enabled: true,
+        strength: WheelDebounceStrength::MAX,
+    };
+    assert_eq!(restored.wheel_debounce("2b042"), expected);
+    assert_eq!(restored.wheel_debounce("absent"), WheelDebounce::default());
+
+    cfg.set_wheel_debounce_strength("2b042", WheelDebounceStrength::DEFAULT);
+    cfg.set_wheel_debounce_enabled("2b042", false);
+    let body = toml::to_string_pretty(&cfg).expect("serialize");
+    assert!(
+        !body.contains("wheel_debounce"),
+        "an untouched filter is not written: {body}"
+    );
+}
+
 #[test]
 fn scroll_resolution_roundtrips_all_three_states() {
     let mut cfg = Config::default();

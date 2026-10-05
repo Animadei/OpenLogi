@@ -25,6 +25,11 @@ impl MainWheelMovement {
         }
     }
 
+    /// Ratchet notches moved; positive is away from the user.
+    pub(super) fn notches(self) -> f64 {
+        self.notches
+    }
+
     /// The scroll to re-synthesise with the device's own settings: inverted
     /// when configured, scaled by its sensitivity.
     pub(super) fn scroll(self, wheel: MainWheelDispatch) -> ScrollDelta {

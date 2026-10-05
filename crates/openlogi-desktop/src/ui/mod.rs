@@ -12,3 +12,4 @@ pub mod section;
 pub mod spacing;
 pub mod status;
 pub mod theme;
+pub(crate) mod toggle_row;

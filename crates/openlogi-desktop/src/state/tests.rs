@@ -9,7 +9,7 @@ use openlogi_core::binding::{
 };
 use openlogi_core::config::{
     Config, DeviceIdentity, LightSettings, Lighting, ScrollResolution, ThumbwheelSensitivity,
-    VerticalScrollSensitivity,
+    VerticalScrollSensitivity, WheelDebounce, WheelDebounceStrength,
 };
 use openlogi_core::device::{
     BatteryInfo, BatteryLevel, BatteryStatus, Capabilities, DeviceInventory, DeviceKind,
@@ -56,6 +56,7 @@ mod reload;
 mod scroll_sensitivity;
 mod smartshift;
 mod transient_identity;
+mod wheel_debounce;
 mod wheel_resolution;
 
 /// Config key of the mouse [`direct_inventory`] builds with a real unit id.
@@ -140,6 +141,23 @@ pub(super) fn state_with_a_known_mouse() -> AppState {
         inventories: &[inventory],
         ..Sources::in_memory(Config::ephemeral(), &resolver, commands)
     })
+}
+
+/// The known mouse, with `set` adding to the capabilities it reports.
+pub(super) fn state_with_mouse_capabilities(set: impl FnOnce(&mut Capabilities)) -> AppState {
+    let mut state = state_with_a_known_mouse();
+    let mut record = state
+        .current_record()
+        .cloned()
+        .expect("the fixture selects its mouse");
+    let capabilities = record
+        .capabilities
+        .as_mut()
+        .expect("the fixture mouse reports capabilities");
+    set(capabilities);
+    // The store holds the record list and its selection together.
+    state.devices.replace(vec![record], 0);
+    state
 }
 
 fn app(id: &str, display_name: &str) -> ForegroundApp {

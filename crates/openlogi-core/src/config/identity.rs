@@ -358,6 +358,19 @@ pub(super) fn fold(device: &mut DeviceConfig, mut legacy: DeviceConfig, route_ke
         );
     }
 
+    // `WheelDebounce` has its own notion of "unset" too, and a switch with its
+    // strength cannot be merged either, so it folds the same way.
+    if device.wheel_debounce.is_default() {
+        device.wheel_debounce = legacy.wheel_debounce;
+    } else if !legacy.wheel_debounce.is_default() && device.wheel_debounce != legacy.wheel_debounce
+    {
+        tracing::warn!(
+            %route_key,
+            field = "wheel_debounce",
+            "filter differs between merged entries; keeping the canonical one"
+        );
+    }
+
     // `enabled` defaults to `true` and is only ever persisted when `false`,
     // so a legacy `false` is a deliberate "leave this device alone" choice
     // that must not be lost under a canonical entry that never opted out.

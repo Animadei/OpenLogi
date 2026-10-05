@@ -12,11 +12,13 @@ fn units_per_notch() -> NonZeroU8 {
     NonZeroU8::new(units).expect("the scale is not zero")
 }
 
-/// A captured wheel re-synthesised at `sensitivity`, not inverted.
+/// A captured wheel re-synthesised at `sensitivity`, not inverted, with no
+/// ratchet filter.
 fn wheel_at(sensitivity: VerticalScrollSensitivity) -> MainWheelDispatch {
     MainWheelDispatch {
         sensitivity,
         inverted: false,
+        debounce: None,
     }
 }
 

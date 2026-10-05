@@ -1,6 +1,7 @@
 //! Resolve captured HID++ inputs against the active per-device plan.
 
 mod main_wheel;
+mod settle;
 mod wheel;
 
 use std::collections::HashMap;
@@ -14,6 +15,7 @@ use openlogi_hid::thumbwheel::WheelResolution;
 use tracing::debug;
 
 use self::main_wheel::MainWheelMovement;
+use self::settle::WheelSettleFilter;
 use self::wheel::{ScrollScale, WheelAccumulators, WheelOutput, WheelRotation};
 use super::GestureOutputs;
 use crate::capture_plan::DispatchPlan;
@@ -96,6 +98,22 @@ impl SessionWheels {
     }
 }
 
+/// Ratchet catch-glitch history scoped to exact capture-session incarnations,
+/// for the same reason as [`SessionWheels`]: a replacement epoch starts with
+/// no history.
+#[derive(Default)]
+struct SessionSettleFilters(HashMap<HidppSessionId, WheelSettleFilter>);
+
+impl SessionSettleFilters {
+    fn for_session(&mut self, session: &HidppSessionId) -> &mut WheelSettleFilter {
+        self.0.entry(session.clone()).or_default()
+    }
+
+    fn cancel_session(&mut self, session: &HidppSessionId) {
+        self.0.remove(session);
+    }
+}
+
 /// Input routing plus the per-session state retained between
 /// captured events. Capture-session lifecycle remains owned by the parent.
 pub(super) struct InputDispatcher {
@@ -103,6 +121,7 @@ pub(super) struct InputDispatcher {
     outputs: GestureOutputs,
     wheels: SessionWheels,
     gesture_presses: GesturePresses,
+    settle_filters: SessionSettleFilters,
 }
 
 impl InputDispatcher {
@@ -113,6 +132,7 @@ impl InputDispatcher {
             outputs,
             wheels: SessionWheels::default(),
             gesture_presses: GesturePresses::default(),
+            settle_filters: SessionSettleFilters::default(),
         }
     }
 
@@ -136,6 +156,7 @@ impl InputDispatcher {
         self.outputs.cancel_session(session);
         self.wheels.cancel_session(session);
         self.gesture_presses.cancel_session(session);
+        self.settle_filters.cancel_session(session);
     }
 
     /// Route one captured input from `session` to its bound action or
@@ -267,15 +288,23 @@ impl InputDispatcher {
     }
 
     fn dispatch_main_wheel(
-        &self,
+        &mut self,
         session: &HidppSessionId,
         plan: &DispatchPlan,
         delta: i16,
         units_per_notch: NonZeroU8,
     ) {
+        let key = session.device_key();
         let movement = MainWheelMovement::from_units(delta, units_per_notch);
-        self.outputs
-            .post_scroll(session, movement.scroll(plan.main_wheel));
+        if let Some(strength) = plan.main_wheel.debounce {
+            let filter = self.settle_filters.for_session(session);
+            if filter.observe(movement.notches(), strength) {
+                debug!(key, delta, "main wheel ratchet catch-glitch dropped");
+                return;
+            }
+        }
+        let scroll = movement.scroll(plan.main_wheel);
+        self.outputs.post_scroll(session, scroll);
     }
 }
 

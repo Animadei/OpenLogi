@@ -13,7 +13,9 @@ use std::sync::Arc;
 
 use openlogi_core::binding::{Action, Binding, ButtonId, GestureDirection, default_binding};
 use openlogi_core::bindings::{button_bindings_for, hidpp_gesture_maps_for, oshook_gestures_for};
-use openlogi_core::config::{Config, ThumbwheelSensitivity, VerticalScrollSensitivity};
+use openlogi_core::config::{
+    Config, ThumbwheelSensitivity, VerticalScrollSensitivity, WheelDebounceStrength,
+};
 use openlogi_core::device_order::PhysicalDeviceKey;
 use openlogi_hid::DeviceRoute;
 use openlogi_hid::hires_wheel::NativeDirection;
@@ -80,6 +82,8 @@ pub struct MainWheelDispatch {
     /// Whether scroll is inverted. The firmware ignores its own inversion
     /// while the wheel is captured, so the re-synthesis applies it.
     pub inverted: bool,
+    /// The ratchet catch-glitch filter's strength, or `None` while it is off.
+    pub debounce: Option<WheelDebounceStrength>,
 }
 
 /// One device's independently versioned hardware target and dispatch plan.
@@ -162,9 +166,10 @@ pub fn captures_main_wheel(config: &Config, config_key: &str) -> bool {
         return false;
     };
     let global = config.app_settings.applied_vertical_sensitivity();
-    device
+    let own_sensitivity = device
         .vertical_scroll_sensitivity
-        .is_some_and(|own| own != global)
+        .is_some_and(|own| own != global);
+    own_sensitivity || device.wheel_debounce.enabled
 }
 
 /// Build one device's plan from the config (per-app effective for `app`).
@@ -253,6 +258,7 @@ pub fn plan_for_device(
     let main_wheel = MainWheelDispatch {
         sensitivity: config.vertical_scroll_sensitivity(config_key),
         inverted: false,
+        debounce: config.wheel_debounce(config_key).active_strength(),
     };
     DeviceCapturePlan {
         target: CaptureTarget {
@@ -608,6 +614,36 @@ mod tests {
             "with the global turned off, the hook leaves other mice at 1x"
         );
         assert!(!captures_main_wheel(&cfg, "another-mouse"));
+    }
+
+    /// Turning on the ratchet debounce captures that mouse's main wheel and no
+    /// other.
+    #[test]
+    fn test_wheel_debounce_capture() {
+        let mut cfg = Config::default();
+        cfg.set_wheel_debounce_enabled("2b042", true);
+        let plan = mouse_plan(&cfg);
+        assert!(plan.target.spec.main_wheel.is_some());
+        assert_eq!(
+            plan.dispatch.main_wheel.debounce,
+            Some(WheelDebounceStrength::DEFAULT)
+        );
+
+        cfg.set_wheel_debounce_strength("2b042", WheelDebounceStrength::MAX);
+        let plan = mouse_plan(&cfg);
+        assert_eq!(
+            plan.dispatch.main_wheel.debounce,
+            Some(WheelDebounceStrength::MAX)
+        );
+        assert!(!captures_main_wheel(&cfg, "another-mouse"));
+
+        cfg.set_wheel_debounce_enabled("2b042", false);
+        let plan = mouse_plan(&cfg);
+        assert_eq!(
+            plan.target.spec.main_wheel, None,
+            "off leaves the wheel native"
+        );
+        assert_eq!(plan.dispatch.main_wheel.debounce, None);
     }
 
     /// The configured native mode reaches the capture, and an inverted wheel

@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 
 use super::{
     CameraControls, Config, DeviceIdentity, LightSettings, Lighting, ScrollResolution, SmartShift,
-    ThumbwheelSensitivity, VerticalScrollSensitivity,
+    ThumbwheelSensitivity, VerticalScrollSensitivity, WheelDebounce, WheelDebounceStrength,
 };
 use crate::binding::{
     ActionRingConfig, ActionRingIcon, ActionRingSlot, Binding, ButtonId, RingAction,
@@ -404,5 +404,37 @@ impl Config {
             .entry(device_key.to_string())
             .or_default()
             .vertical_scroll_sensitivity = sensitivity;
+    }
+
+    /// `device_key`'s ratchet catch-glitch filter, off for an unconfigured or
+    /// absent device.
+    #[must_use]
+    pub fn wheel_debounce(&self, device_key: &str) -> WheelDebounce {
+        self.devices
+            .get(device_key)
+            .map(|d| d.wheel_debounce)
+            .unwrap_or_default()
+    }
+
+    /// Turn `device_key`'s ratchet catch-glitch filter on or off.
+    pub fn set_wheel_debounce_enabled(&mut self, device_key: &str, enabled: bool) {
+        self.devices
+            .entry(device_key.to_string())
+            .or_default()
+            .wheel_debounce
+            .enabled = enabled;
+    }
+
+    /// Set `device_key`'s ratchet catch-glitch filter strength.
+    pub fn set_wheel_debounce_strength(
+        &mut self,
+        device_key: &str,
+        strength: WheelDebounceStrength,
+    ) {
+        self.devices
+            .entry(device_key.to_string())
+            .or_default()
+            .wheel_debounce
+            .strength = strength;
     }
 }

@@ -2,7 +2,8 @@
 
 use tracing::debug;
 
-use openlogi_core::config::Config;
+use openlogi_core::config::{Config, WheelDebounce, WheelDebounceStrength};
+use openlogi_core::device::Capabilities;
 
 use crate::state::devices::DeviceRecord;
 
@@ -117,6 +118,68 @@ impl AppState {
             return events;
         }
         self.persist_and_reload("wheel resolution");
+        events
+    }
+    /// The active device's ratchet debounce: off, at the default strength,
+    /// when no device is selected or it has none configured.
+    #[must_use]
+    pub fn current_wheel_debounce(&self) -> WheelDebounce {
+        self.current_record()
+            .and_then(DeviceRecord::persistent_config_key)
+            .map(|key| self.config.wheel_debounce(key))
+            .unwrap_or_default()
+    }
+    /// Turn the active device's ratchet debounce on or off, persist it, and
+    /// reload the background service so it captures or releases the device's
+    /// main wheel.
+    /// No-op without a selected, HiResWheel-capable device.
+    pub fn commit_wheel_debounce_enabled(&mut self, enabled: bool) -> StateEvents {
+        self.edit_current_device(
+            "ratchet debounce",
+            |capabilities| capabilities.hires_wheel,
+            |config, key| config.set_wheel_debounce_enabled(key, enabled),
+        )
+    }
+    /// Persist the active device's ratchet debounce strength and ask the
+    /// background service to reload it. No-op without a selected, HiResWheel-capable device.
+    pub fn commit_wheel_debounce_strength(
+        &mut self,
+        strength: WheelDebounceStrength,
+    ) -> StateEvents {
+        self.edit_current_device(
+            "ratchet debounce strength",
+            |capabilities| capabilities.hires_wheel,
+            |config, key| config.set_wheel_debounce_strength(key, strength),
+        )
+    }
+    /// Apply `edit` to the active device's config entry, persist it, and
+    /// reload the background service. No-op without a selected device whose capabilities
+    /// `supports` the setting; `setting` names the change in the log.
+    fn edit_current_device(
+        &mut self,
+        setting: &'static str,
+        supports: impl FnOnce(Capabilities) -> bool,
+        edit: impl FnOnce(&mut Config, &str),
+    ) -> StateEvents {
+        let events = self.for_current_device(StateEvent::DeviceConfigChanged);
+        let supported = self
+            .current_record()
+            .and_then(|record| record.capabilities)
+            .is_some_and(supports);
+        if !supported {
+            debug!(setting, "active device does not support this setting");
+            return events;
+        }
+        let Some(key) = self
+            .current_record()
+            .and_then(DeviceRecord::persistent_config_key)
+            .map(str::to_string)
+        else {
+            debug!(setting, "no persistent device key — change ignored");
+            return events;
+        };
+        self.config.edit(|config| edit(config, &key));
+        self.persist_and_reload(setting);
         events
     }
 }

@@ -449,6 +449,110 @@ impl From<ThumbwheelSensitivity> for i32 {
     }
 }
 
+const WHEEL_DEBOUNCE_STRENGTH_MIN: u8 = 1;
+const WHEEL_DEBOUNCE_STRENGTH_MAX: u8 = 4;
+const WHEEL_DEBOUNCE_STRENGTH_DEFAULT: u8 = 2;
+
+/// Confirmation threshold of the ratchet catch-glitch filter, on a `1..=4`
+/// scale: how many whole-notch ticks a reversal must accumulate after its
+/// first before it is trusted.
+#[nutype(
+    const_fn,
+    validate(
+        greater_or_equal = WHEEL_DEBOUNCE_STRENGTH_MIN,
+        less_or_equal = WHEEL_DEBOUNCE_STRENGTH_MAX
+    ),
+    derive(
+        Debug,
+        Clone,
+        Copy,
+        PartialEq,
+        Eq,
+        PartialOrd,
+        Ord,
+        TryFrom,
+        Into,
+        Display,
+        Serialize,
+        Deserialize
+    )
+)]
+pub struct WheelDebounceStrength(u8);
+
+impl WheelDebounceStrength {
+    /// Lowest selectable strength.
+    pub const MIN: Self = match Self::try_new(WHEEL_DEBOUNCE_STRENGTH_MIN) {
+        Ok(value) => value,
+        Err(_) => panic!("valid minimum wheel debounce strength"),
+    };
+    /// Highest selectable strength.
+    pub const MAX: Self = match Self::try_new(WHEEL_DEBOUNCE_STRENGTH_MAX) {
+        Ok(value) => value,
+        Err(_) => panic!("valid maximum wheel debounce strength"),
+    };
+    /// Out-of-the-box strength.
+    pub const DEFAULT: Self = match Self::try_new(WHEEL_DEBOUNCE_STRENGTH_DEFAULT) {
+        Ok(value) => value,
+        Err(_) => panic!("valid default wheel debounce strength"),
+    };
+
+    /// Round and clamp a floating-point slider value into the valid range.
+    #[must_use]
+    pub fn from_rounded(value: f32) -> Self {
+        let raw = rounded_debounce_strength(value);
+        let Ok(value) = Self::try_new(raw) else {
+            unreachable!("clamped wheel debounce strength is always valid");
+        };
+        value
+    }
+
+    /// Whole-notch ticks a reversal must accumulate after its first before
+    /// the filter trusts it.
+    #[must_use]
+    pub fn required_confirmations(self) -> u32 {
+        u32::from(self.into_inner())
+    }
+}
+
+impl Default for WheelDebounceStrength {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
+}
+
+impl From<WheelDebounceStrength> for f32 {
+    fn from(strength: WheelDebounceStrength) -> Self {
+        Self::from(strength.into_inner())
+    }
+}
+
+/// One device's ratchet catch-glitch filter: whether it runs, and the
+/// strength it keeps while it is off.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WheelDebounce {
+    /// Whether the filter runs. Off by default.
+    #[serde(default)]
+    pub enabled: bool,
+    /// How many ticks of a direction change the filter holds back.
+    #[serde(default)]
+    pub strength: WheelDebounceStrength,
+}
+
+impl WheelDebounce {
+    /// `skip_serializing_if` helper: an untouched filter is not written.
+    #[must_use]
+    pub fn is_default(&self) -> bool {
+        self == &Self::default()
+    }
+
+    /// The strength while the filter runs, else `None`.
+    #[must_use]
+    pub fn active_strength(self) -> Option<WheelDebounceStrength> {
+        self.enabled.then_some(self.strength)
+    }
+}
+
 fn rounded_sensitivity(value: f32) -> u8 {
     let value = if value.is_nan() {
         f32::from(SENSITIVITY_MIN)
@@ -457,6 +561,21 @@ fn rounded_sensitivity(value: f32) -> u8 {
     };
     value
         .clamp(f32::from(SENSITIVITY_MIN), f32::from(SENSITIVITY_MAX))
+        .round()
+        .saturating_as::<u8>()
+}
+
+fn rounded_debounce_strength(value: f32) -> u8 {
+    let value = if value.is_nan() {
+        f32::from(WHEEL_DEBOUNCE_STRENGTH_MIN)
+    } else {
+        value
+    };
+    value
+        .clamp(
+            f32::from(WHEEL_DEBOUNCE_STRENGTH_MIN),
+            f32::from(WHEEL_DEBOUNCE_STRENGTH_MAX),
+        )
         .round()
         .saturating_as::<u8>()
 }
