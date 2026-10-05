@@ -13,12 +13,13 @@ use std::sync::Arc;
 
 use openlogi_core::binding::{Action, Binding, ButtonId, GestureDirection, default_binding};
 use openlogi_core::bindings::{button_bindings_for, hidpp_gesture_maps_for, oshook_gestures_for};
-use openlogi_core::config::{Config, ThumbwheelSensitivity};
+use openlogi_core::config::{Config, ThumbwheelSensitivity, VerticalScrollSensitivity};
 use openlogi_core::device_order::PhysicalDeviceKey;
 use openlogi_hid::DeviceRoute;
+use openlogi_hid::hires_wheel::NativeDirection;
 use openlogi_hid::reprog_controls::DPI_MODE_SHIFT_CIDS;
 use openlogi_hid::session::gesture::{
-    CaptureSpec, DIVERTABLE_STANDARD_BUTTONS, GESTURE_SOURCE_BUTTONS,
+    CaptureSpec, DIVERTABLE_STANDARD_BUTTONS, GESTURE_SOURCE_BUTTONS, MainWheelSpec,
 };
 use tokio::sync::watch;
 
@@ -64,9 +65,21 @@ pub struct DispatchPlan {
     /// This device's effective thumb-wheel sensitivity (device override or the
     /// app-wide default).
     pub thumbwheel_sensitivity: ThumbwheelSensitivity,
+    /// How a captured main wheel's movement is re-synthesised.
+    pub main_wheel: MainWheelDispatch,
     /// Pointer identity used to select these mouse bindings; absent for the
     /// explicitly focused policy and keyboard input.
     pub pointer_target: Option<openlogi_hook::PointerTarget>,
+}
+
+/// The device's own settings applied to its captured main wheel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MainWheelDispatch {
+    /// This device's effective vertical sensitivity.
+    pub sensitivity: VerticalScrollSensitivity,
+    /// Whether scroll is inverted. The firmware ignores its own inversion
+    /// while the wheel is captured, so the re-synthesis applies it.
+    pub inverted: bool,
 }
 
 /// One device's independently versioned hardware target and dispatch plan.
@@ -79,6 +92,16 @@ pub struct DeviceCapturePlan {
 }
 
 impl DeviceCapturePlan {
+    /// Record the device's configured native wheel mode: the mode a captured
+    /// main wheel is handed back in, and whether its re-synthesised scroll
+    /// inverts.
+    pub(crate) fn set_native_wheel(&mut self, native: MainWheelSpec) {
+        if let Some(main_wheel) = self.target.spec.main_wheel.as_mut() {
+            *main_wheel = native;
+        }
+        self.dispatch.main_wheel.inverted = native.direction == Some(NativeDirection::Inverted);
+    }
+
     /// Hand the `0x1b04` controls in `owned` to another session on the same
     /// device: they leave every divert set of this plan, and the dispatch map
     /// keeps resolving them so a press the other session forwards still finds
@@ -126,6 +149,22 @@ pub(crate) fn hidpp_side_gesture_maps_for(
         .into_iter()
         .filter(|(button, _)| matches!(button, ButtonId::Back | ButtonId::Forward))
         .collect()
+}
+
+/// Whether `config_key`'s main wheel must be captured over HID++: its own
+/// wheel settings differ from what the OS hook applies to every mouse, and an
+/// OS wheel event does not say which mouse sent it. The wheel-mode writer
+/// consults the same answer, since a captured wheel's mode belongs to its
+/// capture session.
+#[must_use]
+pub fn captures_main_wheel(config: &Config, config_key: &str) -> bool {
+    let Some(device) = config.devices.get(config_key) else {
+        return false;
+    };
+    let global = config.app_settings.applied_vertical_sensitivity();
+    device
+        .vertical_scroll_sensitivity
+        .is_some_and(|own| own != global)
 }
 
 /// Build one device's plan from the config (per-app effective for `app`).
@@ -210,6 +249,11 @@ pub fn plan_for_device(
             .is_some_and(|binding| binding.click_action() != default_binding(*button))
     });
     let thumbwheel_sensitivity = config.thumbwheel_sensitivity(config_key);
+    let capture_main_wheel = captures_main_wheel(config, config_key);
+    let main_wheel = MainWheelDispatch {
+        sensitivity: config.vertical_scroll_sensitivity(config_key),
+        inverted: false,
+    };
     DeviceCapturePlan {
         target: CaptureTarget {
             physical_key,
@@ -217,6 +261,7 @@ pub fn plan_for_device(
             spec: CaptureSpec {
                 capture_thumbwheel: thumbwheel_sensitivity != ThumbwheelSensitivity::DEFAULT
                     || thumbwheel_bindings_nondefault,
+                main_wheel: capture_main_wheel.then(MainWheelSpec::default),
                 divert_gesture_sources: GESTURE_SOURCE_BUTTONS
                     .into_iter()
                     .filter(|(_, button)| gesture_bindings.contains_key(button))
@@ -233,6 +278,7 @@ pub fn plan_for_device(
             gesture_bindings,
             side_gesture_bindings,
             thumbwheel_sensitivity,
+            main_wheel,
             pointer_target: None,
         },
     }
@@ -511,6 +557,79 @@ mod tests {
                 .divert_buttons
                 .contains(&(HAPTIC_PANEL_CID, ButtonId::HapticPanel)),
             "a single-bound panel must be plain-diverted, or the binding can never fire"
+        );
+    }
+
+    /// Mouse `2b042`'s plan with no per-app profile, the first rearm generation,
+    /// and the OS mouse hook available — none of which the main wheel reads.
+    fn mouse_plan(cfg: &Config) -> DeviceCapturePlan {
+        let app = None;
+        let rearm_generation = 0;
+        let os_mouse_hook_available = true;
+        plan_for_device(
+            cfg,
+            "2b042",
+            route(),
+            app,
+            rearm_generation,
+            os_mouse_hook_available,
+        )
+    }
+
+    /// A mouse's main wheel is captured only while its own sensitivity differs
+    /// from the app-wide one.
+    #[test]
+    fn test_main_wheel_capture() {
+        let own = VerticalScrollSensitivity::MAX;
+        let mut cfg = Config::default();
+        let plan = mouse_plan(&cfg);
+        assert_eq!(plan.target.spec.main_wheel, None, "no setting of its own");
+        assert_eq!(
+            plan.dispatch.main_wheel.sensitivity,
+            VerticalScrollSensitivity::DEFAULT
+        );
+
+        cfg.set_device_vertical_scroll_sensitivity("2b042", Some(own));
+        let plan = mouse_plan(&cfg);
+        assert_eq!(plan.target.spec.main_wheel, Some(MainWheelSpec::default()));
+        assert_eq!(plan.dispatch.main_wheel.sensitivity, own);
+
+        cfg.app_settings.vertical_scroll_sensitivity = own;
+        let plan = mouse_plan(&cfg);
+        assert_eq!(
+            plan.target.spec.main_wheel, None,
+            "the OS hook already applies the same value to every mouse"
+        );
+
+        cfg.app_settings.vertical_scroll_sensitivity_enabled = false;
+        let plan = mouse_plan(&cfg);
+        assert!(
+            plan.target.spec.main_wheel.is_some(),
+            "with the global turned off, the hook leaves other mice at 1x"
+        );
+        assert!(!captures_main_wheel(&cfg, "another-mouse"));
+    }
+
+    /// The configured native mode reaches the capture, and an inverted wheel
+    /// inverts the re-synthesised scroll.
+    #[test]
+    fn test_native_wheel_mode() {
+        let native = MainWheelSpec {
+            resolution: Some(openlogi_core::config::ScrollResolution::Low),
+            direction: Some(NativeDirection::Inverted),
+        };
+        let mut cfg = Config::default();
+        cfg.set_device_vertical_scroll_sensitivity("2b042", Some(VerticalScrollSensitivity::MAX));
+        let mut captured = mouse_plan(&cfg);
+        captured.set_native_wheel(native);
+        assert_eq!(captured.target.spec.main_wheel, Some(native));
+        assert!(captured.dispatch.main_wheel.inverted);
+
+        let mut native_plan = mouse_plan(&Config::default());
+        native_plan.set_native_wheel(native);
+        assert_eq!(
+            native_plan.target.spec.main_wheel, None,
+            "recording the mode never captures a wheel by itself"
         );
     }
 

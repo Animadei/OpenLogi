@@ -156,3 +156,36 @@ fn config_without_asset_source_keeps_automatic_selection() {
         AssetSourcePreference::Automatic
     );
 }
+
+/// Configs from before the on/off switches keep both app-wide sensitivities
+/// on.
+#[test]
+fn test_sensitivity_switches_default_on() {
+    let own = VerticalScrollSensitivity::MIN;
+    let body = format!(
+        "schema_version = {SCHEMA_VERSION}\n[app_settings]\nvertical_scroll_sensitivity = {own}\n"
+    );
+    let parsed: Config = toml::from_str(&body).expect("config predating the switches");
+    let settings = &parsed.app_settings;
+    assert!(settings.vertical_scroll_sensitivity_enabled);
+    assert!(settings.thumbwheel_sensitivity_enabled);
+    assert_eq!(settings.applied_vertical_sensitivity(), own);
+
+    let mut cfg = parsed;
+    cfg.app_settings.vertical_scroll_sensitivity_enabled = false;
+    cfg.app_settings.thumbwheel_sensitivity_enabled = false;
+    let restored = write_and_read(&cfg).app_settings;
+    assert_eq!(
+        restored.applied_vertical_sensitivity(),
+        VerticalScrollSensitivity::DEFAULT,
+        "turned off, the app-wide value applies the default"
+    );
+    assert_eq!(
+        restored.vertical_scroll_sensitivity, own,
+        "the value itself is kept"
+    );
+    assert_eq!(
+        restored.applied_thumbwheel_sensitivity(),
+        ThumbwheelSensitivity::DEFAULT
+    );
+}

@@ -37,6 +37,38 @@ fn configured_wheel_mode_gates_resolution_and_inversion_independently() {
     assert_eq!(configured_wheel_mode(&config, &device), None);
 }
 
+/// The wheel-mode writer stays out while the capture session owns the wheel.
+#[test]
+fn test_wheel_mode_while_captured() {
+    let mut config = Config::default();
+    config.set_invert_scroll("a", true);
+    let mut device = dev("a", 1, true);
+    device.capabilities = Some(Capabilities {
+        hires_wheel: true,
+        scroll_inversion: true,
+        ..Capabilities::default()
+    });
+    assert_eq!(
+        configured_wheel_mode(&config, &device),
+        Some(WheelModeChange::Inversion(true))
+    );
+
+    config.set_device_vertical_scroll_sensitivity("a", Some(VerticalScrollSensitivity::MAX));
+    assert_eq!(
+        configured_wheel_mode(&config, &device),
+        None,
+        "a writer racing the session would hand the captured wheel back to the OS"
+    );
+    assert_eq!(
+        configured_native_wheel(&config, &device),
+        MainWheelSpec {
+            resolution: None,
+            direction: Some(openlogi_hid::hires_wheel::NativeDirection::Inverted),
+        },
+        "the session still learns the mode to hand the wheel back in"
+    );
+}
+
 #[test]
 fn configured_wheel_mode_leaves_unset_resolution_unmanaged() {
     let config = Config::default();

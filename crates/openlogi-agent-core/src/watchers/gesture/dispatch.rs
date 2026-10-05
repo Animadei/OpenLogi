@@ -1,8 +1,10 @@
 //! Resolve captured HID++ inputs against the active per-device plan.
 
+mod main_wheel;
 mod wheel;
 
 use std::collections::HashMap;
+use std::num::NonZeroU8;
 use std::time::Instant;
 
 use openlogi_core::binding::{Action, Binding, ButtonId, default_binding};
@@ -11,6 +13,7 @@ use openlogi_hid::CapturedInput;
 use openlogi_hid::thumbwheel::WheelResolution;
 use tracing::debug;
 
+use self::main_wheel::MainWheelMovement;
 use self::wheel::{ScrollScale, WheelAccumulators, WheelOutput, WheelRotation};
 use super::GestureOutputs;
 use crate::capture_plan::DispatchPlan;
@@ -219,6 +222,10 @@ impl InputDispatcher {
                 increments,
                 resolution,
             } => self.dispatch_wheel(session, plan, increments, resolution),
+            CapturedInput::MainWheelScroll {
+                delta,
+                units_per_notch,
+            } => self.dispatch_main_wheel(session, plan, delta, units_per_notch),
             CapturedInput::ThumbwheelDirection { .. } => {
                 unreachable!("thumb-wheel direction reports return before dispatch")
             }
@@ -257,6 +264,18 @@ impl InputDispatcher {
                 );
             }
         }
+    }
+
+    fn dispatch_main_wheel(
+        &self,
+        session: &HidppSessionId,
+        plan: &DispatchPlan,
+        delta: i16,
+        units_per_notch: NonZeroU8,
+    ) {
+        let movement = MainWheelMovement::from_units(delta, units_per_notch);
+        self.outputs
+            .post_scroll(session, movement.scroll(plan.main_wheel));
     }
 }
 

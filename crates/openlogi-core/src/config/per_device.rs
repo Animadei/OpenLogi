@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 
 use super::{
     CameraControls, Config, DeviceIdentity, LightSettings, Lighting, ScrollResolution, SmartShift,
-    ThumbwheelSensitivity,
+    ThumbwheelSensitivity, VerticalScrollSensitivity,
 };
 use crate::binding::{
     ActionRingConfig, ActionRingIcon, ActionRingSlot, Binding, ButtonId, RingAction,
@@ -367,7 +367,7 @@ impl Config {
         self.devices
             .get(device_key)
             .and_then(|d| d.thumbwheel_sensitivity)
-            .unwrap_or(self.app_settings.thumbwheel_sensitivity)
+            .unwrap_or_else(|| self.app_settings.applied_thumbwheel_sensitivity())
     }
 
     /// Set (or clear, with `None`) `device_key`'s thumb-wheel sensitivity
@@ -381,5 +381,28 @@ impl Config {
             .entry(device_key.to_string())
             .or_default()
             .thumbwheel_sensitivity = sensitivity;
+    }
+
+    /// The effective vertical wheel sensitivity for `device_key`: the device's
+    /// override when set, else the app-wide value while it is turned on.
+    #[must_use]
+    pub fn vertical_scroll_sensitivity(&self, device_key: &str) -> VerticalScrollSensitivity {
+        self.devices
+            .get(device_key)
+            .and_then(|d| d.vertical_scroll_sensitivity)
+            .unwrap_or_else(|| self.app_settings.applied_vertical_sensitivity())
+    }
+
+    /// Set (or clear, with `None`) `device_key`'s vertical wheel sensitivity
+    /// override.
+    pub fn set_device_vertical_scroll_sensitivity(
+        &mut self,
+        device_key: &str,
+        sensitivity: Option<VerticalScrollSensitivity>,
+    ) {
+        self.devices
+            .entry(device_key.to_string())
+            .or_default()
+            .vertical_scroll_sensitivity = sensitivity;
     }
 }

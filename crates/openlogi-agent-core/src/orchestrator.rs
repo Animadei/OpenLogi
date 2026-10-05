@@ -51,8 +51,8 @@ mod devices;
 #[cfg(test)]
 use devices::{VOLATILE_REAPPLY_CONFIRM_RETRIES, reapply_targets};
 use devices::{
-    any_device_needs_capture_rearm, build_devices, configured_wheel_mode, host_switch_links,
-    is_hidpp_device, pick_current, plan_reapply, stable_id,
+    any_device_needs_capture_rearm, build_devices, configured_native_wheel, configured_wheel_mode,
+    host_switch_links, is_hidpp_device, pick_current, plan_reapply, stable_id,
 };
 
 /// The minimal per-device facts the agent needs: the config key (binding /
@@ -318,7 +318,7 @@ impl Orchestrator {
             keyboard_bindings: Arc::new(RwLock::new(config.keyboard.bindings.clone())),
             scroll_preferences: Arc::new(ScrollPreferences::new(
                 config.app_settings.smooth_scroll,
-                config.app_settings.vertical_scroll_sensitivity,
+                config.app_settings.applied_vertical_sensitivity(),
             )),
             dpi_cycle: Arc::new(RwLock::new(DpiCycles::default())),
             capture_plans,
@@ -604,6 +604,7 @@ impl Orchestrator {
                     self.os_mouse_hook_available,
                 );
                 plan.dispatch.pointer_target = pointer_target;
+                plan.set_native_wheel(configured_native_wheel(&self.config, dev));
                 if let Some(keyboard) = keyboard
                     .as_ref()
                     .filter(|keyboard| keyboard.route == plan.target.route)
@@ -1009,7 +1010,7 @@ impl Orchestrator {
         // the light remains camera-linked. Changing the policy invalidates it.
         self.shared.scroll_preferences.publish(
             self.config.app_settings.smooth_scroll,
-            self.config.app_settings.vertical_scroll_sensitivity,
+            self.config.app_settings.applied_vertical_sensitivity(),
         );
         self.observable
             .set_launch_at_login(self.config.app_settings.launch_at_login);

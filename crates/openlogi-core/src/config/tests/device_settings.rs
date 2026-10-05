@@ -52,6 +52,30 @@ fn default_invert_scroll_is_omitted_from_toml() {
     );
 }
 
+/// A mouse's own vertical sensitivity is saved; without one, it follows the
+/// app-wide value.
+#[test]
+fn test_vertical_scroll_sensitivity() {
+    let own = VerticalScrollSensitivity::MAX;
+    let global = VerticalScrollSensitivity::MIN;
+    let mut cfg = Config::default();
+    cfg.app_settings.vertical_scroll_sensitivity = global;
+    assert_eq!(cfg.vertical_scroll_sensitivity("2b042"), global);
+
+    cfg.set_device_vertical_scroll_sensitivity("2b042", Some(own));
+    let restored = write_and_read(&cfg);
+    assert_eq!(restored.vertical_scroll_sensitivity("2b042"), own);
+    assert_eq!(restored.vertical_scroll_sensitivity("absent"), global);
+
+    cfg.set_device_vertical_scroll_sensitivity("2b042", None);
+    let restored = write_and_read(&cfg);
+    assert_eq!(
+        restored.vertical_scroll_sensitivity("2b042"),
+        global,
+        "a cleared override follows the app-wide value again"
+    );
+}
+
 #[test]
 fn scroll_resolution_roundtrips_all_three_states() {
     let mut cfg = Config::default();

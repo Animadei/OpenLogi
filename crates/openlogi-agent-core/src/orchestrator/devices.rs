@@ -7,9 +7,12 @@ use std::collections::HashMap;
 use openlogi_core::config::Config;
 use openlogi_core::device::{DeviceInventory, StandaloneDevice};
 use openlogi_core::device_order::{DeviceIdentity, DeviceStableId};
+use openlogi_hid::hires_wheel::NativeDirection;
+use openlogi_hid::session::gesture::MainWheelSpec;
 use openlogi_hid::{DIRECT_DEVICE_INDEX, DeviceRoute};
 
 use super::AgentDevice;
+use crate::capture_plan::captures_main_wheel;
 use crate::hardware::WheelModeChange;
 use crate::watchers::host_switch::HostSwitchLink;
 
@@ -18,6 +21,10 @@ use crate::watchers::host_switch::HostSwitchLink;
 /// that is not configured, is left out of the change and keeps the device's
 /// current value; `None` when that leaves nothing to write.
 pub(super) fn configured_wheel_mode(config: &Config, dev: &AgentDevice) -> Option<WheelModeChange> {
+    // A captured wheel's mode belongs to its capture session.
+    if captures_main_wheel(config, &dev.config_key) {
+        return None;
+    }
     let capabilities = dev.capabilities?;
     let route_key = stable_id(dev).route_key();
     let device = config.devices.get(dev.config_key.as_str());
@@ -29,6 +36,32 @@ pub(super) fn configured_wheel_mode(config: &Config, dev: &AgentDevice) -> Optio
         .scroll_inversion
         .then(|| device.is_some_and(|d| d.effective_invert_scroll(&route_key)));
     WheelModeChange::new(resolution, inverted)
+}
+
+/// The native mode a captured main wheel is handed back in: the same two
+/// settings as [`configured_wheel_mode`], each `None` when the device cannot
+/// take it or it is not configured.
+pub(super) fn configured_native_wheel(config: &Config, dev: &AgentDevice) -> MainWheelSpec {
+    let Some(capabilities) = dev.capabilities else {
+        return MainWheelSpec::default();
+    };
+    let route_key = stable_id(dev).route_key();
+    let device = config.devices.get(dev.config_key.as_str());
+    let resolution = capabilities
+        .hires_wheel
+        .then(|| device.and_then(|d| d.effective_scroll_resolution(&route_key)))
+        .flatten();
+    let direction = capabilities.scroll_inversion.then(|| {
+        if device.is_some_and(|d| d.effective_invert_scroll(&route_key)) {
+            NativeDirection::Inverted
+        } else {
+            NativeDirection::Default
+        }
+    });
+    MainWheelSpec {
+        resolution,
+        direction,
+    }
 }
 
 /// Build the agent device list from an inventory snapshot. Mirrors the GUI's

@@ -245,8 +245,8 @@ impl AppState {
     ) -> StateEvents {
         let events = StateEvent::DeviceConfigChanged(key.clone()).into();
         let key = key.as_str();
-        let override_value =
-            (sensitivity != self.config.app_settings.thumbwheel_sensitivity).then_some(sensitivity);
+        let global = self.config.app_settings.applied_thumbwheel_sensitivity();
+        let override_value = (sensitivity != global).then_some(sensitivity);
         let stored = self
             .config
             .devices
@@ -259,6 +259,43 @@ impl AppState {
             config.set_device_thumbwheel_sensitivity(key, override_value);
         });
         self.persist_and_reload("device thumbwheel sensitivity");
+        events
+    }
+
+    /// The effective vertical wheel sensitivity for `key` (its per-device
+    /// override, else the app-wide value while it is turned on).
+    #[must_use]
+    pub fn device_vertical_scroll_sensitivity(&self, key: &str) -> VerticalScrollSensitivity {
+        self.config.vertical_scroll_sensitivity(key)
+    }
+
+    /// Set `key`'s per-device vertical wheel sensitivity override and persist
+    /// it. Committing the value the device would follow anyway *clears* the
+    /// override, so the device goes back to following Settings → General.
+    /// OpenLogi applies an override by capturing the device's main wheel. A
+    /// stored override that would not change writes nothing and is still
+    /// reported.
+    pub fn commit_device_vertical_scroll_sensitivity(
+        &mut self,
+        key: &DeviceKey,
+        sensitivity: VerticalScrollSensitivity,
+    ) -> StateEvents {
+        let events = StateEvent::DeviceConfigChanged(key.clone()).into();
+        let key = key.as_str();
+        let global = self.config.app_settings.applied_vertical_sensitivity();
+        let override_value = (sensitivity != global).then_some(sensitivity);
+        let stored = self
+            .config
+            .devices
+            .get(key)
+            .and_then(|d| d.vertical_scroll_sensitivity);
+        if stored == override_value {
+            return events;
+        }
+        self.config.edit(|config| {
+            config.set_device_vertical_scroll_sensitivity(key, override_value);
+        });
+        self.persist_and_reload("device vertical scroll sensitivity");
         events
     }
 
@@ -277,6 +314,19 @@ impl AppState {
         self.config
             .edit(|config| config.app_settings.thumbwheel_sensitivity = sensitivity);
         self.persist_and_reload("thumbwheel sensitivity");
+        StateEvent::SettingsChanged.into()
+    }
+    /// Turn the app-wide thumb-wheel sensitivity on or off for every device
+    /// without its own value, and persist it; the value itself is kept. An
+    /// already-set value writes nothing and is still reported; disk failures
+    /// restore the persisted value.
+    pub fn commit_thumbwheel_sensitivity_enabled(&mut self, enabled: bool) -> StateEvents {
+        if self.config.app_settings.thumbwheel_sensitivity_enabled == enabled {
+            return StateEvent::SettingsChanged.into();
+        }
+        self.config
+            .edit(|config| config.app_settings.thumbwheel_sensitivity_enabled = enabled);
+        self.persist_and_reload("thumbwheel sensitivity enabled");
         StateEvent::SettingsChanged.into()
     }
     /// Persist the application target for mouse button profiles and reload the
@@ -318,6 +368,19 @@ impl AppState {
         self.config
             .edit(|config| config.app_settings.vertical_scroll_sensitivity = sensitivity);
         self.persist_and_reload("vertical scroll sensitivity");
+        StateEvent::SettingsChanged.into()
+    }
+    /// Turn the app-wide vertical sensitivity on or off for every mouse
+    /// without its own value, and persist it; the value itself is kept. An
+    /// already-set value writes nothing and is still reported; disk failures
+    /// restore the persisted value.
+    pub fn commit_vertical_scroll_sensitivity_enabled(&mut self, enabled: bool) -> StateEvents {
+        if self.config.app_settings.vertical_scroll_sensitivity_enabled == enabled {
+            return StateEvent::SettingsChanged.into();
+        }
+        self.config
+            .edit(|config| config.app_settings.vertical_scroll_sensitivity_enabled = enabled);
+        self.persist_and_reload("vertical scroll sensitivity enabled");
         StateEvent::SettingsChanged.into()
     }
     pub fn commit_auto_download_assets(&mut self, enabled: bool) -> StateEvents {

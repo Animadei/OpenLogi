@@ -220,6 +220,12 @@ pub struct AppSettings {
     /// continuous pixel input is never scaled.
     #[serde(default)]
     pub vertical_scroll_sensitivity: VerticalScrollSensitivity,
+    /// Whether [`Self::vertical_scroll_sensitivity`] applies at all. `true`
+    /// (default) keeps the app-wide value; `false` leaves every mouse without
+    /// its own sensitivity at 1×, keeping the value for when it is turned on
+    /// again.
+    #[serde(default = "default_true")]
+    pub vertical_scroll_sensitivity_enabled: bool,
     /// Which app icon the user picked. Applied at launch, and whenever it
     /// changes, by whichever process owns a surface showing one — on macOS the
     /// GUI hands the choice to the Dock and writes it onto the bundle (so the
@@ -254,6 +260,11 @@ pub struct AppSettings {
     /// only diverted from native scrolling once this leaves the default.
     #[serde(default)]
     pub thumbwheel_sensitivity: ThumbwheelSensitivity,
+    /// Whether [`Self::thumbwheel_sensitivity`] applies at all. `true`
+    /// (default) keeps the app-wide value; `false` leaves every device
+    /// without its own value at the default.
+    #[serde(default = "default_true")]
+    pub thumbwheel_sensitivity_enabled: bool,
     /// Light/dark appearance preference. Defaults to following the OS.
     #[serde(default)]
     pub appearance: Appearance,
@@ -457,6 +468,28 @@ impl AppSettings {
     pub fn is_default(&self) -> bool {
         self == &Self::default()
     }
+
+    /// The vertical sensitivity a mouse without its own value gets: the
+    /// app-wide value while it is turned on, else 1×.
+    #[must_use]
+    pub fn applied_vertical_sensitivity(&self) -> VerticalScrollSensitivity {
+        if self.vertical_scroll_sensitivity_enabled {
+            self.vertical_scroll_sensitivity
+        } else {
+            VerticalScrollSensitivity::DEFAULT
+        }
+    }
+
+    /// The thumb-wheel sensitivity a device without its own value gets: the
+    /// app-wide value while it is turned on, else the default.
+    #[must_use]
+    pub fn applied_thumbwheel_sensitivity(&self) -> ThumbwheelSensitivity {
+        if self.thumbwheel_sensitivity_enabled {
+            self.thumbwheel_sensitivity
+        } else {
+            ThumbwheelSensitivity::DEFAULT
+        }
+    }
 }
 
 impl Default for AppSettings {
@@ -470,10 +503,12 @@ impl Default for AppSettings {
             capture_mouse_events: true,
             smooth_scroll: false,
             vertical_scroll_sensitivity: VerticalScrollSensitivity::DEFAULT,
+            vertical_scroll_sensitivity_enabled: true,
             auto_download_assets: true,
             asset_source: AssetSourcePreference::Automatic,
             language: None,
             thumbwheel_sensitivity: ThumbwheelSensitivity::DEFAULT,
+            thumbwheel_sensitivity_enabled: true,
             appearance: Appearance::System,
             ui_scale: UiScale::Normal,
             device_view_mode: DeviceViewMode::Grid,

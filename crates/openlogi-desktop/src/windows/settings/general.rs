@@ -39,6 +39,7 @@ pub(super) fn general_page(
             )
             .description(tr!("pointer.vertical_scroll_sensitivity_description")),
         )
+        .item(vertical_scroll_sensitivity_enabled_item())
         .item(
             SettingItem::new(
                 tr!("pointer.thumb_wheel_sensitivity"),
@@ -46,6 +47,7 @@ pub(super) fn general_page(
             )
             .description(tr!("pointer.thumbwheel_sensitivity_description")),
         )
+        .item(thumbwheel_sensitivity_enabled_item())
         .item(launch_at_login_item());
 
     // Switched off under System Settings › Login Items: nothing can start
@@ -122,6 +124,41 @@ fn mouse_profile_target_item() -> SettingItem {
     )
     .layout(gpui::Axis::Vertical)
     .description(tr!("pointer.mouse_profile_target_description"))
+}
+
+/// The switch that turns the app-wide vertical sensitivity on or off.
+fn vertical_scroll_sensitivity_enabled_item() -> SettingItem {
+    let switch = SettingField::switch(
+        |cx| {
+            AppState::try_read(cx)
+                .is_some_and(|s| s.app_settings().vertical_scroll_sensitivity_enabled)
+        },
+        |enabled, cx| {
+            AppState::apply(cx, |state| {
+                state.commit_vertical_scroll_sensitivity_enabled(enabled)
+            });
+        },
+    );
+    let title = tr!("pointer.vertical_scroll_sensitivity_enabled");
+    let description = tr!("pointer.vertical_scroll_sensitivity_enabled_description");
+    SettingItem::new(title, switch).description(description)
+}
+
+/// The switch that turns the app-wide thumb-wheel sensitivity on or off.
+fn thumbwheel_sensitivity_enabled_item() -> SettingItem {
+    let switch = SettingField::switch(
+        |cx| {
+            AppState::try_read(cx).is_some_and(|s| s.app_settings().thumbwheel_sensitivity_enabled)
+        },
+        |enabled, cx| {
+            AppState::apply(cx, |state| {
+                state.commit_thumbwheel_sensitivity_enabled(enabled)
+            });
+        },
+    );
+    let title = tr!("pointer.thumbwheel_sensitivity_enabled");
+    let description = tr!("pointer.thumbwheel_sensitivity_enabled_description");
+    SettingItem::new(title, switch).description(description)
 }
 
 /// The smooth-scrolling switch.

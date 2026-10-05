@@ -2,18 +2,20 @@
 //! diverts, the firmware state that records, and how it is re-armed and handed
 //! back.
 
+use std::num::NonZeroU8;
 use std::sync::Arc;
 
 use hidpp::{channel::HidppChannel, device::Device};
 use openlogi_core::binding::ButtonId;
 use tracing::{debug, warn};
 
-use super::{CaptureSpec, CapturedInput};
+use super::{CaptureSpec, CapturedInput, MainWheelSpec};
+use crate::hires_wheel::{self, HiResWheel, NativeWheelMode};
 use crate::reprog_controls::{self, ReprogControlsV4};
 use crate::session::capture::open_device;
 use crate::session::capture_restore::{
-    ArmedReporting, CaptureError, CaptureSessionFailure, PendingCaptureRestore, ReprogRestore,
-    divert_change,
+    ArmedReporting, CaptureError, CaptureSessionFailure, MainWheelRestore, PendingCaptureRestore,
+    ReprogRestore, divert_change,
 };
 use crate::session::restore::rollback_start;
 use crate::thumbwheel::{self, Thumbwheel, ThumbwheelInfo, WheelDirection, WheelResolution};
@@ -41,6 +43,9 @@ pub(super) struct ArmedControls {
     /// `0x2150` accessor and the information read while diverting it, present
     /// when the thumb wheel is diverted.
     pub(super) thumb: Option<ArmedThumbwheel>,
+    /// The main wheel's accessor, its notch scale, and the native mode it is
+    /// handed back in, present when it is captured.
+    pub(super) main_wheel: Option<ArmedMainWheel>,
 }
 
 pub(super) struct ArmedThumbwheel {
@@ -61,6 +66,13 @@ impl ArmedThumbwheel {
             WheelDirection::Default
         }
     }
+}
+
+pub(super) struct ArmedMainWheel {
+    pub(super) wheel: HiResWheel,
+    /// High-resolution units per ratchet notch.
+    pub(super) units_per_notch: NonZeroU8,
+    native: NativeWheelMode,
 }
 
 impl ArmedControls {
@@ -84,6 +96,7 @@ impl ArmedControls {
             reprog,
             reporting,
             thumb,
+            main_wheel,
             ..
         } = self;
         let reprog =
@@ -92,6 +105,10 @@ impl ArmedControls {
             retired,
             reprog,
             thumb.as_ref().map(|thumb| thumb.wheel.feature_index()),
+            main_wheel.map(|wheel| MainWheelRestore {
+                feature_index: wheel.wheel.feature_index(),
+                mode: wheel.native,
+            }),
         )
     }
 
@@ -118,6 +135,11 @@ impl ArmedControls {
             && let Err(error) = thumb.wheel.divert(thumb.direction()).await
         {
             warn!(?error, "thumb-wheel re-divert after wake failed");
+        }
+        if let Some(main_wheel) = self.main_wheel.as_ref()
+            && let Err(error) = main_wheel.wheel.divert(main_wheel.native.resolution).await
+        {
+            warn!(?error, "main-wheel re-divert after wake failed");
         }
     }
 }
@@ -149,6 +171,7 @@ pub(super) async fn arm_controls(
         && armed.dpi_cids.is_empty()
         && armed.button_cids.is_empty()
         && armed.thumb.is_none()
+        && armed.main_wheel.is_none()
     {
         debug!(slot, "no capturable controls — idle session");
     }
@@ -257,6 +280,53 @@ pub(super) async fn arm_controls_into(
             thumb.wheel.divert(thumb.direction()).await?;
         }
     }
+
+    if let Some(spec) = spec.main_wheel
+        && let Some(info) = device.root().get_feature(hires_wheel::FEATURE_ID).await?
+    {
+        arm_main_wheel(
+            HiResWheel::new(Arc::clone(chan), slot, info.index),
+            spec,
+            armed,
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+/// Capture the main wheel. A wheel whose scale or mode cannot be read stays
+/// native: its movement could not be scaled, and the rest of the session is
+/// still worth arming.
+async fn arm_main_wheel(
+    wheel: HiResWheel,
+    spec: MainWheelSpec,
+    armed: &mut ArmedControls,
+) -> Result<(), CaptureError> {
+    let capability = match wheel.get_capability().await {
+        Ok(capability) => capability,
+        Err(e) => {
+            warn!(error = ?e, "main wheel getWheelCapability failed — left native");
+            return Ok(());
+        }
+    };
+    let current = match wheel.get_mode().await {
+        Ok(mode) => mode.native_mode(),
+        Err(e) => {
+            warn!(error = ?e, "main wheel getWheelMode failed — left native");
+            return Ok(());
+        }
+    };
+    let native = NativeWheelMode {
+        resolution: spec.resolution.unwrap_or(current.resolution),
+        direction: spec.direction.unwrap_or(current.direction),
+    };
+    // Store ownership before the write, as for the thumb wheel.
+    let armed_wheel = armed.main_wheel.insert(ArmedMainWheel {
+        wheel,
+        units_per_notch: capability.units_per_notch,
+        native,
+    });
+    armed_wheel.wheel.divert(native.resolution).await?;
     Ok(())
 }
 

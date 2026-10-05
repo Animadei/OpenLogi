@@ -12,6 +12,7 @@ use thiserror::Error;
 
 use super::restore::{PendingRestore, RestoreOutcome, RestorePlan, SessionFailure};
 use crate::backend::BackendError;
+use crate::hires_wheel::{HiResWheel, NativeWheelMode};
 use crate::reprog_controls::{self, ReprogControlsV4};
 use crate::thumbwheel::Thumbwheel;
 use crate::{ChannelRegistry, IoSuspended, SharedChannel};
@@ -72,6 +73,13 @@ impl ReprogRestore {
     }
 }
 
+/// A captured main wheel and the native mode it is handed back in.
+#[derive(Clone, Copy)]
+pub(crate) struct MainWheelRestore {
+    pub(crate) feature_index: u8,
+    pub(crate) mode: NativeWheelMode,
+}
+
 #[derive(Clone, Copy)]
 pub(crate) enum CaptureStop {
     /// The owner deliberately requested teardown.
@@ -87,6 +95,7 @@ pub(crate) enum CaptureStop {
 pub struct CaptureRestorePlan {
     reprog: Option<ReprogRestore>,
     thumb_index: Option<u8>,
+    main_wheel: Option<MainWheelRestore>,
 }
 
 impl fmt::Debug for CaptureRestorePlan {
@@ -100,6 +109,7 @@ impl fmt::Debug for CaptureRestorePlan {
                     .map_or(0, |reprog| reprog.controls.len()),
             )
             .field("has_thumbwheel", &self.thumb_index.is_some())
+            .field("has_main_wheel", &self.main_wheel.is_some())
             .finish()
     }
 }
@@ -117,8 +127,16 @@ impl RestorePlan for CaptureRestorePlan {
             }
         }
         if let Some(feature_index) = self.thumb_index {
-            let thumbwheel = Thumbwheel::new(channel, device_index, feature_index);
+            let thumbwheel = Thumbwheel::new(channel.clone(), device_index, feature_index);
             restored &= restore_result(thumbwheel.undivert().await, "thumb wheel");
+        }
+        if let Some(MainWheelRestore {
+            feature_index,
+            mode,
+        }) = self.main_wheel
+        {
+            let main_wheel = HiResWheel::new(channel, device_index, feature_index);
+            restored &= restore_result(main_wheel.undivert(mode).await, "main wheel");
         }
         restored
     }
@@ -142,8 +160,9 @@ impl PendingCaptureRestore {
         retired: &SharedChannel,
         reprog: Option<ReprogRestore>,
         thumb_index: Option<u8>,
+        main_wheel: Option<MainWheelRestore>,
     ) -> Option<Self> {
-        if reprog.is_none() && thumb_index.is_none() {
+        if reprog.is_none() && thumb_index.is_none() && main_wheel.is_none() {
             return None;
         }
         Some(Self::owing(
@@ -151,6 +170,7 @@ impl PendingCaptureRestore {
             CaptureRestorePlan {
                 reprog,
                 thumb_index,
+                main_wheel,
             },
         ))
     }

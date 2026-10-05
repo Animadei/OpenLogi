@@ -23,10 +23,12 @@
 mod accum;
 mod arm;
 
+use std::num::NonZeroU8;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use hidpp::protocol::v20;
 use openlogi_core::binding::{ButtonId, GestureDirection};
+use openlogi_core::config::ScrollResolution;
 use tokio::sync::mpsc;
 use tracing::info;
 
@@ -43,6 +45,7 @@ pub use super::capture_restore::{
     CaptureChannelSlot, CaptureError, CaptureSessionFailure, CaptureSessionOutcome,
     PendingCaptureRestore,
 };
+use crate::hires_wheel::{self, NativeDirection};
 use crate::reprog_controls::{self, ReprogControlsV4};
 use crate::thumbwheel::{self, WheelResolution};
 
@@ -68,6 +71,15 @@ pub enum CapturedInput {
         /// instead of scrolling by however finely this wheel happens to
         /// report.
         resolution: WheelResolution,
+    },
+    /// Main-wheel movement from a captured wheel, to re-synthesise as
+    /// vertical scroll with the device's own settings.
+    MainWheelScroll {
+        /// Signed movement; positive is away from the user (scroll up).
+        delta: i16,
+        /// `delta` units per ratchet notch: the wheel's high-resolution
+        /// multiplier, or `1` for a notch-resolution event.
+        units_per_notch: NonZeroU8,
     },
     /// The un-inverted polarity learned while arming a thumb wheel. This is a
     /// one-time session fact rather than user input; the agent records it for
@@ -134,6 +146,10 @@ pub struct CaptureSpec {
     /// Divert the thumb wheel over `0x2150` (rotation rebind / sensitivity /
     /// click bound).
     pub capture_thumbwheel: bool,
+    /// Capture the main wheel through the HID++ HiResWheel feature, so its
+    /// movement is re-synthesised with the device's own settings. `None`
+    /// leaves the wheel native.
+    pub main_wheel: Option<MainWheelSpec>,
     /// Gesture-source CIDs ([`GESTURE_SOURCE_BUTTONS`] members) to divert
     /// with raw-XY — one per source in gesture mode; empty when no HID++
     /// control gestures.
@@ -145,6 +161,16 @@ pub struct CaptureSpec {
     /// [`DIVERTABLE_STANDARD_BUTTONS`] and non-gesturing
     /// [`GESTURE_SOURCE_BUTTONS`] whose binding leaves the default.
     pub divert_buttons: Vec<(u16, ButtonId)>,
+}
+
+/// The native wheel mode a captured main wheel is handed back in. A field
+/// left `None` keeps what the device reported when it was captured.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct MainWheelSpec {
+    /// Configured reporting resolution.
+    pub resolution: Option<ScrollResolution>,
+    /// Configured native direction.
+    pub direction: Option<NativeDirection>,
 }
 
 /// Capture the controls selected by `spec` on `route` until `host.shutdown`
@@ -211,6 +237,7 @@ impl ArmedCapture for GestureCapture {
             dpi_buttons = armed.dpi_cids.len(),
             buttons = armed.button_cids.len(),
             thumbwheel = armed.thumb.is_some(),
+            main_wheel = armed.main_wheel.is_some(),
             wake_rearm,
             "control capture active"
         );
@@ -234,6 +261,14 @@ impl ArmedCapture for GestureCapture {
             .thumb
             .as_ref()
             .map_or(WheelResolution::UNKNOWN, ArmedThumbwheel::resolution);
+        let main_wheel_index = armed
+            .main_wheel
+            .as_ref()
+            .map(|wheel| wheel.wheel.feature_index());
+        let main_wheel_units = armed
+            .main_wheel
+            .as_ref()
+            .map_or(NonZeroU8::MIN, |wheel| wheel.units_per_notch);
         let dpi_set = armed.dpi_cids.clone();
         let button_set = armed.button_cids.clone();
         move |msg| {
@@ -256,6 +291,13 @@ impl ArmedCapture for GestureCapture {
             if let Some(idx) = thumb_index
                 && let Some(event) = thumbwheel::decode_event(msg, device_index, idx)
                 && let Some(input) = thumbwheel_input(event, thumb_resolution)
+            {
+                let _ = sink.send(input);
+                return;
+            }
+            if let Some(idx) = main_wheel_index
+                && let Some(movement) = hires_wheel::decode_event(msg, device_index, idx)
+                && let Some(input) = main_wheel_input(movement, main_wheel_units)
             {
                 let _ = sink.send(input);
             }
@@ -304,6 +346,23 @@ fn thumbwheel_input(
     event
         .single_tap
         .then_some(CapturedInput::ButtonPulse(ButtonId::Thumbwheel))
+}
+
+/// The scroll input one captured main-wheel report stands for, if any: its
+/// movement, counted in high-resolution units or, for a notch-resolution
+/// report, in whole notches.
+fn main_wheel_input(
+    movement: hires_wheel::WheelMovement,
+    units_per_notch: NonZeroU8,
+) -> Option<CapturedInput> {
+    (movement.delta != 0).then_some(CapturedInput::MainWheelScroll {
+        delta: movement.delta,
+        units_per_notch: if movement.high_resolution {
+            units_per_notch
+        } else {
+            NonZeroU8::MIN
+        },
+    })
 }
 
 #[cfg(test)]
