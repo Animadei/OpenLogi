@@ -28,9 +28,9 @@ use serde::{Deserialize, Serialize};
 pub const FEATURE_ID: u16 = 0x2150;
 
 /// `getThumbwheelInfo` function ID.
-const FN_GET_INFO: u8 = 0;
+pub(crate) const FN_GET_INFO: u8 = 0;
 /// `setThumbwheelReporting` function ID.
-const FN_SET_REPORTING: u8 = 2;
+pub(crate) const FN_SET_REPORTING: u8 = 2;
 
 /// Reporting-mode value: native HID scroll.
 const MODE_NATIVE: u8 = 0;
@@ -166,6 +166,58 @@ impl ThumbwheelInfo {
     pub fn positive_is_forward(self) -> bool {
         self.default_dir == 1
     }
+
+    /// Encode this as the `getThumbwheelInfo` reply a fake device sends.
+    #[cfg(test)]
+    pub(crate) fn to_payload(self) -> [u8; 16] {
+        let mut p = [0u8; 16];
+        p[0..2].copy_from_slice(&self.resolution.native_res.to_be_bytes());
+        p[2..4].copy_from_slice(&self.resolution.diverted_res.to_be_bytes());
+        p[4] = self.default_dir;
+        if self.supports_single_tap {
+            p[5] = CAP_SINGLE_TAP;
+        }
+        p
+    }
+}
+
+/// Where the wheel reports its rotation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReportingMode {
+    /// Native HID scroll, to the OS.
+    Native,
+    /// HID++ events, to the capture session.
+    Diverted,
+}
+
+/// A `setThumbwheelReporting` request as the device sees it: the test mouse
+/// records each one it receives.
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ThumbwheelReporting {
+    /// Where the wheel reports.
+    pub(crate) mode: ReportingMode,
+    /// The sign it reports rotation with, relative to its `default_dir`.
+    pub(crate) direction: WheelDirection,
+}
+
+#[cfg(test)]
+impl ThumbwheelReporting {
+    /// Decode a `setThumbwheelReporting` request, laid out as
+    /// [`Thumbwheel::divert`] and [`Thumbwheel::report_natively`] write it.
+    pub(crate) fn from_params(params: &[u8]) -> Self {
+        let mode = match params[0] {
+            MODE_NATIVE => ReportingMode::Native,
+            MODE_DIVERTED => ReportingMode::Diverted,
+            other => panic!("setThumbwheelReporting has no mode {other}"),
+        };
+        let direction = if params[1] == 0 {
+            WheelDirection::Default
+        } else {
+            WheelDirection::Inverted
+        };
+        Self { mode, direction }
+    }
 }
 
 /// A decoded `thumbwheelEvent`.
@@ -283,6 +335,16 @@ impl Thumbwheel {
         Ok(())
     }
 
+    /// Keep native HID scrolling, with the wheel's scroll in `direction`
+    /// relative to its `default_dir`.
+    pub async fn report_natively(&self, direction: WheelDirection) -> Result<(), Hidpp20Error> {
+        let mut params = [0u8; 16];
+        params[0] = MODE_NATIVE;
+        params[1] = u8::from(direction == WheelDirection::Inverted);
+        self.call(FN_SET_REPORTING, params).await?;
+        Ok(())
+    }
+
     /// Hand native scrolling back to the firmware.
     pub async fn undivert(&self) -> Result<(), Hidpp20Error> {
         let mut params = [0u8; 16];
@@ -294,12 +356,24 @@ impl Thumbwheel {
 
 /// Rotation sign for diverted wheel reports, relative to the wheel's
 /// `default_dir`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum WheelDirection {
     /// Report rotation with the wheel's default sign.
+    #[default]
     Default,
     /// Invert the rotation sign.
     Inverted,
+}
+
+impl WheelDirection {
+    /// The opposite sign.
+    #[must_use]
+    pub fn opposite(self) -> Self {
+        match self {
+            Self::Default => Self::Inverted,
+            Self::Inverted => Self::Default,
+        }
+    }
 }
 
 #[cfg(test)]

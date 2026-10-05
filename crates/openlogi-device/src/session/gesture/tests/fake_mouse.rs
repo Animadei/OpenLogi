@@ -9,6 +9,7 @@ use hidpp::channel::{HidppChannel, LONG_REPORT_ID, LONG_REPORT_LENGTH};
 
 use super::*;
 use crate::hires_wheel::{self, WheelMode};
+use crate::thumbwheel::{self, ThumbwheelInfo, ThumbwheelReporting};
 
 /// Byte positions in a HID++ 2.0 report.
 const REPORT_ID: usize = 0;
@@ -31,6 +32,8 @@ const ABSENT_FEATURE_INDEX: u8 = 0;
 
 /// Where the fake's feature table puts its main wheel.
 const MAIN_WHEEL_FEATURE_INDEX: u8 = 8;
+/// Where the fake's feature table puts its thumb wheel.
+const THUMBWHEEL_FEATURE_INDEX: u8 = 6;
 
 /// A mouse with the wheel features a test gives it.
 #[derive(Clone)]
@@ -42,6 +45,7 @@ pub(super) struct FakeMouse {
 #[derive(Default)]
 struct Features {
     main_wheel: Option<MainWheelState>,
+    thumbwheel: Option<ThumbwheelState>,
 }
 
 struct MainWheelState {
@@ -51,6 +55,13 @@ struct MainWheelState {
     mode: WheelMode,
     /// Every mode `setWheelMode` was asked for, in order.
     mode_writes: Vec<WheelMode>,
+}
+
+struct ThumbwheelState {
+    /// What `getThumbwheelInfo` reports.
+    info: ThumbwheelInfo,
+    /// Every `setThumbwheelReporting` request, in order.
+    reporting_writes: Vec<ThumbwheelReporting>,
 }
 
 impl FakeMouse {
@@ -64,6 +75,19 @@ impl FakeMouse {
         };
         Self::with(Features {
             main_wheel: Some(main_wheel),
+            ..Features::default()
+        })
+    }
+
+    /// A mouse whose only feature is a thumb wheel reporting `info`.
+    pub(super) fn with_thumbwheel(info: ThumbwheelInfo) -> Self {
+        let thumbwheel = ThumbwheelState {
+            info,
+            reporting_writes: Vec::new(),
+        };
+        Self::with(Features {
+            thumbwheel: Some(thumbwheel),
+            ..Features::default()
         })
     }
 
@@ -135,6 +159,15 @@ impl FakeMouse {
             .unwrap_or_default()
     }
 
+    /// Every reporting a session set on the thumb wheel, in order.
+    pub(super) fn thumbwheel_reporting_writes(&self) -> Vec<ThumbwheelReporting> {
+        self.lock()
+            .thumbwheel
+            .as_ref()
+            .map(|wheel| wheel.reporting_writes.clone())
+            .unwrap_or_default()
+    }
+
     fn lock(&self) -> MutexGuard<'_, Features> {
         self.features.lock().unwrap_or_else(PoisonError::into_inner)
     }
@@ -146,6 +179,7 @@ impl FakeMouse {
         let answer = match feature_index {
             ROOT_FEATURE_INDEX => self.answer_root(function, params),
             MAIN_WHEEL_FEATURE_INDEX => self.answer_main_wheel(function, params),
+            THUMBWHEEL_FEATURE_INDEX => self.answer_thumbwheel(function, params),
             _ => panic!("the fake mouse has no feature at index {feature_index}"),
         };
         // Every reply is a long report.
@@ -171,6 +205,7 @@ impl FakeMouse {
         let features = self.lock();
         match feature {
             hires_wheel::FEATURE_ID if features.main_wheel.is_some() => MAIN_WHEEL_FEATURE_INDEX,
+            thumbwheel::FEATURE_ID if features.thumbwheel.is_some() => THUMBWHEEL_FEATURE_INDEX,
             _ => ABSENT_FEATURE_INDEX,
         }
     }
@@ -193,5 +228,22 @@ impl FakeMouse {
             _ => panic!("the fake main wheel has no function {function}"),
         };
         vec![answer]
+    }
+
+    fn answer_thumbwheel(&self, function: u8, params: &[u8]) -> Vec<u8> {
+        let mut features = self.lock();
+        let wheel = features
+            .thumbwheel
+            .as_mut()
+            .expect("only a thumb wheel is listed at this index");
+        match function {
+            thumbwheel::FN_GET_INFO => wheel.info.to_payload().to_vec(),
+            thumbwheel::FN_SET_REPORTING => {
+                let reporting = ThumbwheelReporting::from_params(params);
+                wheel.reporting_writes.push(reporting);
+                Vec::new()
+            }
+            _ => panic!("the fake thumb wheel has no function {function}"),
+        }
     }
 }

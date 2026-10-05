@@ -42,6 +42,7 @@ use crate::ui::components::{PanelCard, Toggle};
 use crate::ui::theme::{
     self, ContentWidth, DETAIL_RAIL_W, HEADER_H, Palette, SCREEN_PAD, Typography as _,
 };
+use crate::ui::toggle_row::{ToggleRow, ToggleState};
 
 const CAMERA_PREVIEW_W: Rems = rems(32.125);
 const CAMERA_CONTROLS_W: Rems = rems(31.25);
@@ -374,6 +375,9 @@ struct ScrollingFacts {
     inverted: bool,
     /// Whether the current link reports HID++ inversion support.
     inversion_supported: bool,
+    /// The thumb wheel's persisted inversion, and whether the current link has
+    /// a HID++ thumb wheel.
+    thumbwheel_inversion: ToggleState,
     resolution: Option<openlogi_core::config::ScrollResolution>,
     hires: HiresWheel,
 }
@@ -401,11 +405,16 @@ fn scrolling_card(
     let ScrollingFacts {
         inverted,
         inversion_supported,
+        thumbwheel_inversion,
         resolution,
         hires,
     } = AppState::try_read(cx).map_or_else(ScrollingFacts::default, |state| ScrollingFacts {
         inverted: state.current_invert_scroll(),
         inversion_supported: state.current_scroll_inversion_supported(),
+        thumbwheel_inversion: ToggleState {
+            on: state.current_invert_thumbwheel(),
+            supported: state.current_thumbwheel_supported(),
+        },
         resolution: state.current_scroll_resolution(),
         hires: if state.current_hires_wheel_supported() {
             HiresWheel::Here
@@ -448,6 +457,7 @@ fn scrolling_card(
                     AppState::apply(cx, |state| state.commit_invert_scroll(*inverted));
                 }),
         );
+    let thumbwheel_inversion_row = thumbwheel_inversion_row(pal, thumbwheel_inversion);
     let resolution_description = match hires {
         HiresWheel::Here => match resolution {
             None => tr!("pointer.wheel_resolution_device_default_description"),
@@ -488,9 +498,24 @@ fn scrolling_card(
         v_flex()
             .gap_4()
             .child(inversion_row)
+            .child(thumbwheel_inversion_row)
             .child(main_wheel_panel.clone())
             .child(resolution_row),
     )
+}
+
+/// The thumb wheel's invert switch for the Scrolling card.
+fn thumbwheel_inversion_row(pal: Palette, state: ToggleState) -> impl IntoElement {
+    let row = ToggleRow {
+        id: "invert-horizontal-scroll-toggle",
+        title: tr!("pointer.invert_horizontal_scroll_direction"),
+        description: tr!("pointer.horizontal_scroll_direction_description"),
+        unsupported: tr!("pointer.horizontal_scroll_inversion_unsupported"),
+        state,
+    };
+    row.render(pal, |inverted, cx| {
+        AppState::apply(cx, |state| state.commit_invert_thumbwheel(inverted));
+    })
 }
 
 fn wheel_resolution_control(selected: Option<ScrollResolution>, enabled: bool) -> impl IntoElement {

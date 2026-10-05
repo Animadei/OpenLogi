@@ -377,6 +377,12 @@ pub(super) fn fold(device: &mut DeviceConfig, mut legacy: DeviceConfig, route_ke
     if device.enabled && !legacy.enabled {
         device.enabled = false;
     }
+
+    // `invert_thumbwheel` is a bare bool with no per-link slot: only a legacy
+    // `true` is evidence the user chose anything, so it is kept.
+    if !device.invert_thumbwheel && legacy.invert_thumbwheel {
+        device.invert_thumbwheel = true;
+    }
 }
 
 /// The map-valued halves of [`fold`], split out to keep that function inside

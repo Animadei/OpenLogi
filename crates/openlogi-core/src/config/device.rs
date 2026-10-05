@@ -268,6 +268,13 @@ pub struct DeviceConfig {
     /// (default) is the native direction, and is omitted from `config.toml`.
     #[serde(default, skip_serializing_if = "is_false")]
     pub invert_scroll: bool,
+    /// Invert this device's thumb wheel. The capture session applies it with
+    /// the HID++ Thumbwheel feature's invert flag, whether the wheel scrolls
+    /// natively or is diverted, so actions bound to the wheel's two
+    /// directions swap along with its scroll. `false` (default) is the native
+    /// direction, and is omitted from `config.toml`.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub invert_thumbwheel: bool,
     /// Persisted HID++ `0x2121` wheel resolution. `None` leaves the device's
     /// current resolution unmanaged and omits the field from `config.toml`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -385,6 +392,7 @@ impl Default for DeviceConfig {
             vertical_scroll_sensitivity: None,
             wheel_debounce: WheelDebounce::default(),
             invert_scroll: false,
+            invert_thumbwheel: false,
             scroll_resolution: None,
             host_switch_targets: Vec::new(),
             fn_lock: None,
@@ -507,6 +515,8 @@ struct RawDeviceConfig {
     #[serde(default)]
     invert_scroll: bool,
     #[serde(default)]
+    invert_thumbwheel: bool,
+    #[serde(default)]
     scroll_resolution: Option<ScrollResolution>,
     #[serde(default)]
     host_switch_targets: Vec<String>,
@@ -571,6 +581,7 @@ impl From<RawDeviceConfig> for DeviceConfig {
             vertical_scroll_sensitivity: raw.vertical_scroll_sensitivity,
             wheel_debounce: raw.wheel_debounce,
             invert_scroll: raw.invert_scroll,
+            invert_thumbwheel: raw.invert_thumbwheel,
             scroll_resolution: raw.scroll_resolution,
             host_switch_targets: raw.host_switch_targets,
             fn_lock: raw.fn_lock,

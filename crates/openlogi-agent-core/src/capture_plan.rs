@@ -23,6 +23,7 @@ use openlogi_hid::reprog_controls::DPI_MODE_SHIFT_CIDS;
 use openlogi_hid::session::gesture::{
     CaptureSpec, DIVERTABLE_STANDARD_BUTTONS, GESTURE_SOURCE_BUTTONS, MainWheelSpec,
 };
+use openlogi_hid::thumbwheel::WheelDirection;
 use tokio::sync::watch;
 
 /// Hardware identity of one HID++ capture session.
@@ -254,6 +255,11 @@ pub fn plan_for_device(
             .is_some_and(|binding| binding.click_action() != default_binding(*button))
     });
     let thumbwheel_sensitivity = config.thumbwheel_sensitivity(config_key);
+    let thumbwheel_direction = if config.invert_thumbwheel(config_key) {
+        WheelDirection::Inverted
+    } else {
+        WheelDirection::Default
+    };
     let capture_main_wheel = captures_main_wheel(config, config_key);
     let main_wheel = MainWheelDispatch {
         sensitivity: config.vertical_scroll_sensitivity(config_key),
@@ -267,6 +273,7 @@ pub fn plan_for_device(
             spec: CaptureSpec {
                 capture_thumbwheel: thumbwheel_sensitivity != ThumbwheelSensitivity::DEFAULT
                     || thumbwheel_bindings_nondefault,
+                thumbwheel_direction,
                 main_wheel: capture_main_wheel.then(MainWheelSpec::default),
                 divert_gesture_sources: GESTURE_SOURCE_BUTTONS
                     .into_iter()
@@ -567,7 +574,7 @@ mod tests {
     }
 
     /// Mouse `2b042`'s plan with no per-app profile, the first rearm generation,
-    /// and the OS mouse hook available — none of which the main wheel reads.
+    /// and the OS mouse hook available — none of which the wheels read.
     fn mouse_plan(cfg: &Config) -> DeviceCapturePlan {
         let app = None;
         let rearm_generation = 0;
@@ -614,6 +621,32 @@ mod tests {
             "with the global turned off, the hook leaves other mice at 1x"
         );
         assert!(!captures_main_wheel(&cfg, "another-mouse"));
+    }
+
+    /// Inverting the thumb wheel re-arms the session without diverting the wheel.
+    #[test]
+    fn test_thumbwheel_direction() {
+        let mut cfg = Config::default();
+        let plan = mouse_plan(&cfg);
+        assert_eq!(
+            plan.target.spec.thumbwheel_direction,
+            WheelDirection::Default
+        );
+
+        cfg.set_invert_thumbwheel("2b042", true);
+        let inverted = mouse_plan(&cfg);
+        assert_eq!(
+            inverted.target.spec.thumbwheel_direction,
+            WheelDirection::Inverted
+        );
+        assert!(
+            !inverted.target.spec.capture_thumbwheel,
+            "inverting alone leaves the wheel scrolling natively"
+        );
+        assert_ne!(
+            plan.target, inverted.target,
+            "the capture session re-arms with the new direction"
+        );
     }
 
     /// Turning on the ratchet debounce captures that mouse's main wheel and no

@@ -5,7 +5,7 @@
 use std::num::NonZeroU8;
 use std::sync::Arc;
 
-use hidpp::{channel::HidppChannel, device::Device};
+use hidpp::{channel::HidppChannel, device::Device, protocol::v20::Hidpp20Error};
 use openlogi_core::binding::ButtonId;
 use tracing::{debug, warn};
 
@@ -18,7 +18,9 @@ use crate::session::capture_restore::{
     ReprogRestore, divert_change,
 };
 use crate::session::restore::rollback_start;
-use crate::thumbwheel::{self, Thumbwheel, ThumbwheelInfo, WheelDirection, WheelResolution};
+use crate::thumbwheel::{
+    self, ReportingMode, Thumbwheel, ThumbwheelInfo, WheelDirection, WheelResolution,
+};
 use crate::{ChannelRegistry, SharedChannel};
 
 /// The set of controls a session has diverted, kept so they can be handed back
@@ -51,6 +53,10 @@ pub(super) struct ArmedControls {
 pub(super) struct ArmedThumbwheel {
     pub(super) wheel: Thumbwheel,
     info: Option<ThumbwheelInfo>,
+    /// Where the wheel reports while the session holds it.
+    mode: ReportingMode,
+    /// The direction the user chose for the wheel.
+    user_direction: WheelDirection,
 }
 
 impl ArmedThumbwheel {
@@ -59,11 +65,24 @@ impl ArmedThumbwheel {
             .map_or(WheelResolution::UNKNOWN, |info| info.resolution)
     }
 
+    /// The direction this arming writes. Native reports go to the OS, so only
+    /// the user's direction applies. Diverted reports are first normalised to
+    /// positive-is-forward, and the user's direction applies on top of that.
     fn direction(&self) -> WheelDirection {
-        if self.info.is_some_and(|info| !info.positive_is_forward()) {
-            WheelDirection::Inverted
+        let positive_is_backward = self.info.is_some_and(|info| !info.positive_is_forward());
+        if self.mode == ReportingMode::Diverted && positive_is_backward {
+            self.user_direction.opposite()
         } else {
-            WheelDirection::Default
+            self.user_direction
+        }
+    }
+
+    /// Write this arming's reporting mode and direction. Arming and a wake
+    /// re-arm both go through here, so the two cannot disagree.
+    async fn apply(&self) -> Result<(), Hidpp20Error> {
+        match self.mode {
+            ReportingMode::Diverted => self.wheel.divert(self.direction()).await,
+            ReportingMode::Native => self.wheel.report_natively(self.direction()).await,
         }
     }
 }
@@ -132,7 +151,7 @@ impl ArmedControls {
             }
         }
         if let Some(thumb) = self.thumb.as_ref()
-            && let Err(error) = thumb.wheel.divert(thumb.direction()).await
+            && let Err(error) = thumb.apply().await
         {
             warn!(?error, "thumb-wheel re-divert after wake failed");
         }
@@ -252,7 +271,8 @@ pub(super) async fn arm_controls_into(
         }
     }
 
-    if spec.capture_thumbwheel
+    let invert_thumbwheel = spec.thumbwheel_direction == WheelDirection::Inverted;
+    if (spec.capture_thumbwheel || invert_thumbwheel)
         && let Some(info) = device.root().get_feature(thumbwheel::FEATURE_ID).await?
     {
         let tw = Thumbwheel::new(Arc::clone(chan), slot, info.index);
@@ -270,14 +290,21 @@ pub(super) async fn arm_controls_into(
         if wheel_info.is_some_and(|info| !info.supports_single_tap) {
             debug!("thumb wheel reports no single tap — click not capturable");
         }
+        let mode = if spec.capture_thumbwheel {
+            ReportingMode::Diverted
+        } else {
+            ReportingMode::Native
+        };
         // Store ownership before the write: a transport error cannot prove
         // whether firmware applied diversion, so rollback must cover it too.
         armed.thumb = Some(ArmedThumbwheel {
             wheel: tw,
             info: wheel_info,
+            mode,
+            user_direction: spec.thumbwheel_direction,
         });
         if let Some(thumb) = armed.thumb.as_ref() {
-            thumb.wheel.divert(thumb.direction()).await?;
+            thumb.apply().await?;
         }
     }
 

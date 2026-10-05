@@ -323,6 +323,24 @@ impl Config {
             .invert_scroll = invert;
     }
 
+    /// Whether `device_key`'s thumb wheel is inverted. `false` (the native
+    /// direction) for an unconfigured or absent device.
+    #[must_use]
+    pub fn invert_thumbwheel(&self, device_key: &str) -> bool {
+        self.devices
+            .get(device_key)
+            .is_some_and(|d| d.invert_thumbwheel)
+    }
+
+    /// Set whether `device_key`'s thumb wheel is inverted. The background
+    /// service applies it on the next `ReloadConfig`.
+    pub fn set_invert_thumbwheel(&mut self, device_key: &str, invert: bool) {
+        self.devices
+            .entry(device_key.to_string())
+            .or_default()
+            .invert_thumbwheel = invert;
+    }
+
     /// The configured wheel resolution for `device_key`, or `None` when
     /// OpenLogi should leave the device's current resolution unchanged.
     #[must_use]

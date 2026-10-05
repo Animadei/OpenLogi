@@ -51,6 +51,32 @@ impl AppState {
         self.persist_and_reload("invert scroll");
         events
     }
+    /// Whether the active device's thumb wheel (its horizontal scroll) is
+    /// inverted. `false` when no device is selected or it hasn't opted in.
+    #[must_use]
+    pub fn current_invert_thumbwheel(&self) -> bool {
+        self.current_record()
+            .and_then(DeviceRecord::persistent_config_key)
+            .is_some_and(|key| self.config.invert_thumbwheel(key))
+    }
+    /// Whether the active device has a HID++ thumb wheel.
+    #[must_use]
+    pub fn current_thumbwheel_supported(&self) -> bool {
+        self.current_record()
+            .and_then(|record| record.capabilities)
+            .is_some_and(|capabilities| capabilities.thumbwheel)
+    }
+    /// Set whether the active device's thumb wheel is inverted, persist it,
+    /// and reload the background service so it re-arms the wheel's invert
+    /// flag. No-op
+    /// without a selected device that has a thumb wheel.
+    pub fn commit_invert_thumbwheel(&mut self, invert: bool) -> StateEvents {
+        self.edit_current_device(
+            "invert thumb wheel",
+            |capabilities| capabilities.thumbwheel,
+            |config, key| config.set_invert_thumbwheel(key, invert),
+        )
+    }
     /// The active device's persisted wheel resolution, or `None` when OpenLogi
     /// leaves the device default untouched.
     #[must_use]

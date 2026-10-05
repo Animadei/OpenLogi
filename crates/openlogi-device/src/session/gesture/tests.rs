@@ -20,6 +20,7 @@ mod main_wheel;
 mod restore;
 mod session;
 mod thumb_wheel;
+mod thumb_wheel_direction;
 
 fn reporting(
     diverted: bool,

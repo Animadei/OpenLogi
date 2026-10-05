@@ -55,6 +55,7 @@ mod profile_scope;
 mod reload;
 mod scroll_sensitivity;
 mod smartshift;
+mod thumb_wheel_inversion;
 mod transient_identity;
 mod wheel_debounce;
 mod wheel_resolution;

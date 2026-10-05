@@ -52,6 +52,29 @@ fn default_invert_scroll_is_omitted_from_toml() {
     );
 }
 
+/// Thumb-wheel inversion is saved per mouse and off by default.
+#[test]
+fn test_invert_thumbwheel() {
+    let mut cfg = Config::default();
+    assert!(!cfg.invert_thumbwheel("2b042"));
+
+    cfg.set_invert_thumbwheel("2b042", true);
+    let restored = write_and_read(&cfg);
+    assert!(restored.invert_thumbwheel("2b042"));
+    assert!(!restored.invert_thumbwheel("absent"));
+    assert!(
+        !restored.invert_scroll("2b042"),
+        "the thumb wheel does not take the main wheel with it"
+    );
+
+    cfg.set_invert_thumbwheel("2b042", false);
+    let body = toml::to_string_pretty(&cfg).expect("serialize");
+    assert!(
+        !body.contains("invert_thumbwheel"),
+        "default invert_thumbwheel should be omitted: {body}"
+    );
+}
+
 /// A mouse's own vertical sensitivity is saved; without one, it follows the
 /// app-wide value.
 #[test]

@@ -47,7 +47,7 @@ pub use super::capture_restore::{
 };
 use crate::hires_wheel::{self, NativeDirection};
 use crate::reprog_controls::{self, ReprogControlsV4};
-use crate::thumbwheel::{self, WheelResolution};
+use crate::thumbwheel::{self, WheelDirection, WheelResolution};
 
 /// One input captured from the active device.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -146,6 +146,12 @@ pub struct CaptureSpec {
     /// Divert the thumb wheel over `0x2150` (rotation rebind / sensitivity /
     /// click bound).
     pub capture_thumbwheel: bool,
+    /// The thumb wheel's direction, set with the HID++ Thumbwheel feature's
+    /// invert flag. Inverted without [`Self::capture_thumbwheel`], the wheel
+    /// stays native and the firmware inverts its scroll; with it, the diverted
+    /// rotation inverts, so the re-synthesised scroll and any rebound
+    /// direction swap.
+    pub thumbwheel_direction: WheelDirection,
     /// Capture the main wheel through the HID++ HiResWheel feature, so its
     /// movement is re-synthesised with the device's own settings. `None`
     /// leaves the wheel native.
